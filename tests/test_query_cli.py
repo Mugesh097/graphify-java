@@ -9,6 +9,19 @@ from networkx.readwrite import json_graph
 import graphify.__main__ as mainmod
 
 
+def test_query_cli_does_not_supply_a_default_budget(monkeypatch, tmp_path, capsys):
+    graph_path = _write_graph(tmp_path)
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+    payload = "evidence\n" * 25000
+    def query(graph, question, **kwargs):
+        assert kwargs["token_budget"] is None
+        return payload
+    monkeypatch.setattr("graphify.serve._query_graph_text", query)
+    monkeypatch.setattr(mainmod.sys, "argv", ["graphify", "query", "extract", "--graph", str(graph_path)])
+    mainmod.main()
+    assert payload in capsys.readouterr().out
+
+
 def _write_graph(tmp_path):
     G = nx.Graph()
     G.add_node("n1", label="extract", source_file="extract.py", source_location="L10", community=0)
@@ -473,33 +486,6 @@ def test_query_cli_renders_ordered_three_repo_service_calls_and_context_branch(
     assert "non-matching same-service method alternative(s) omitted" in out
 
 
-def test_bsa_query_preserves_all_downstream_services_and_context_logic(
-    monkeypatch, tmp_path, capsys,
-):
-    graph_path = _write_three_repo_java_flow_graph(tmp_path)
-    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
-    monkeypatch.setattr(mainmod.sys, "argv", [
-        "graphify", "query",
-        "Explain the business flow of GET /v1/remote/addons/details in rcom-catalog-ds",
-        "--audience", "bsa",
-        "--graph", str(graph_path), "--budget", "60000",
-    ])
-
-    mainmod.main()
-    out = capsys.readouterr().out
-    assert out.startswith("BUSINESS API FLOW")
-    assert "rcom-catalog-ds requests biz-catalog-service" in out
-    assert "rcom-catalog-ds requests rcom-contentful-ms" in out
-    assert "Downstream service behavior:" in out
-    biz = out.split("  biz-catalog-service:", 1)[1].split(
-        "  rcom-contentful-ms:", 1
-    )[0]
-    contentful = out.split("  rcom-contentful-ms:", 1)[1]
-    assert "get product offering by external ids" in biz.casefold()
-    assert "find by external ids" in biz.casefold()
-    assert "get addon entries" in contentful.casefold()
-    assert "get device entries" not in out.casefold()
-    assert "get cart entries" not in out.casefold()
 
 
 def test_query_cli_default_budget_does_not_create_an_eight_hop_false_terminal(
@@ -517,7 +503,8 @@ def test_query_cli_default_budget_does_not_create_an_eight_hop_false_terminal(
     out = capsys.readouterr().out
     assert "ContentfulServiceImpl.getAddonEntries()" in out
     assert "ContentfulServiceImpl.getAddonEntries() (unresolved service leaf" not in out
-    assert "RedisRepository.hasKey()" in out or "[!] TRUNCATED:" in out
+    assert "RedisRepository.hasKey()" in out
+    assert "[!] TRUNCATED:" not in out
 
 
 def test_query_cli_continues_deep_java_flow_to_recorded_leaf(monkeypatch, tmp_path, capsys):

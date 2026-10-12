@@ -29,6 +29,9 @@ skills/
 !tools/skillgen/fragments/core/**
 docs/superpowers/
 .vscode/
+# Generated Copilot configurations contain local interpreter/repository paths.
+graphify-copilot-mcp.json
+examples/order-service/.github/hooks/graphify.json
 .kilo
 openspec/
 # Local benchmark scripts — never commit
