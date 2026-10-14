@@ -1,5 +1,12 @@
 ## graphify
 
+First check whether `graphify-out/graph.json` exists. When absent, silently skip
+Graphify and continue native Copilot explanations, debugging, searches, and code
+changes with standard tools and permissions. Do not block, warn, request Graphify
+approval, suggest `/repo-analyzer`, or automatically generate a graph.
+The following graph rules apply only when the graph exists. Explicit manual
+`/repo-analyzer` requests remain supported.
+
 For any question about this repo's architecture, structure, components, or how to add/modify/find
 code, your first action should be `graphify query "<question>"` when `graphify-out/graph.json`
 exists. Use `graphify path "<A>" "<B>"` for relationship questions and `graphify explain "<concept>"`
@@ -19,4 +26,6 @@ do not automatically prefer merged scope. Generate reviewable Java API reference
 `graphify api-docs`. Let Copilot choose presentation style; distinguish recorded evidence
 from source audits and inference. Report missing graph evidence explicitly.
 
-Type `/repo-analyzer` in Copilot Chat to build or update the graph.
+For code changes, analyze graph dependencies and affected callers before inspecting
+source, and follow the existing user-approval process before editing. Update only
+an existing graph after changes. Generate a graph only when explicitly requested.

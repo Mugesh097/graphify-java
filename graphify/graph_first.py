@@ -43,7 +43,7 @@ def _synchronization_lock(out: Path):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def ensure_graph(root: Path, *, refresh: bool = False) -> dict:
+def ensure_graph(root: Path, *, refresh: bool = False, existing_only: bool = False) -> dict:
     """Stat Java files; extract only changed files. Never read source to answer queries.
 
     A legacy graph without our inventory is compared against its generation time.
@@ -59,8 +59,16 @@ def ensure_graph(root: Path, *, refresh: bool = False) -> dict:
         raise ValueError(f"Repository directory does not exist: {root}")
     out = root / GRAPHIFY_OUT
     path = out / "graph.json"
+    # Optional integrations must not create output directories, inventories or
+    # graphs when there is no graph. Explicit generation retains legacy behavior.
+    if existing_only and not path.is_file():
+        return {"graph_path": str(path), "available": False, "refreshed": False,
+                "changed_files": []}
     inventory = out / ".graph_first_inventory.json"
     with _lock, _synchronization_lock(out):
+        if existing_only and not path.is_file():
+            return {"graph_path": str(path), "available": False, "refreshed": False,
+                    "changed_files": []}
         detected = detect(root, extra_excludes=_read_build_excludes(out) or None,
                           gitignore=_read_build_gitignore(out), java_inventory=True)
         if detected.get("walk_errors"):

@@ -67,6 +67,7 @@ def test_reuse_refresh_add_delete_invalid(repo):
 
 
 def test_hook_order_and_sync(repo):
+    ensure_graph(repo)
     assert hook(repo, "PreToolUse", {"session_id": "new"})["continue"] is False
     payload = {"session_id": "one", "prompt": "Add addonStatus to GET /v1/remote/addons/details"}
     assert hook(repo, "UserPromptSubmit", payload)["continue"]
@@ -132,6 +133,7 @@ def test_mcp_stdio_workflow(repo):
     pytest.importorskip("mcp")
     from mcp import ClientSession
     from mcp.client.stdio import stdio_client, StdioServerParameters
+    ensure_graph(repo)
 
     async def run():
         params = StdioServerParameters(command=sys.executable,
@@ -143,7 +145,7 @@ def test_mcp_stdio_workflow(repo):
                 assert {"repository_context", "analyze_change_impact", "refresh_graph", "query_graph"} <= {t.name for t in listed.tools}
                 response = await client.call_tool("repository_context", {"question": "Explain GET /v1/remote/addons/details"})
                 result = json.loads(response.content[0].text)
-                assert result["synchronization"]["refreshed"]
+                assert not result["synchronization"]["refreshed"]
                 assert "AddonController.java" in result["candidate_files"]
                 response = await client.call_tool("analyze_change_impact", {"question": "Add addonStatus to GET /v1/remote/addons/details"})
                 assert "AddonResponse.java" in json.loads(response.content[0].text)["candidate_files"]
@@ -153,4 +155,109 @@ def test_mcp_stdio_workflow(repo):
                 assert "addonStatus" in (repo / "graphify-out/graph.json").read_text(encoding="utf-8")
                 response = await client.call_tool("query_graph", {"question": "AddonResponse"})
                 assert "AddonResponse" in response.content[0].text
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("question", [
+    "Explain GET /v1/remote/addons/details",
+    "Debug why AddonService.details returns null",
+    "Add addonStatus to GET /v1/remote/addons/details",
+])
+def test_missing_graph_hooks_leave_native_tools_unrestricted(repo, monkeypatch, question):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Graphify must not analyze or generate without a graph")
+    monkeypatch.setattr("graphify.graph_first.ensure_graph", forbidden)
+    monkeypatch.setattr("graphify.graph_first.repository_context", forbidden)
+    monkeypatch.setattr("graphify.serve._load_graph", forbidden)
+    for event in ("PreToolUse", "UserPromptSubmit", "PreToolUse", "Stop"):
+        assert hook(repo, event, {"prompt": question, "tool_name": "edit_file"}) == {"continue": True}
+    assert not (repo / "graphify-out").exists()
+
+
+@pytest.mark.parametrize("question", ["Explain AddonService", "Debug AddonService", "Modify AddonService"])
+def test_present_graph_hooks_supply_evidence(repo, question):
+    ensure_graph(repo)
+    assert hook(repo, "UserPromptSubmit", {"prompt": question})["continue"]
+    result = hook(repo, "PreToolUse", {})
+    assert "AddonService.java" in result["hookSpecificOutput"]["additionalContext"]
+
+
+def test_graph_deleted_mid_session_is_not_regenerated(repo):
+    ensure_graph(repo)
+    hook(repo, "UserPromptSubmit", {"prompt": "Modify AddonService"})
+    path = repo / "graphify-out/graph.json"
+    path.unlink()
+    for event in ("PreToolUse", "Stop"):
+        assert hook(repo, event, {}) == {"continue": True}
+    assert not path.exists()
+    assert ensure_graph(repo, existing_only=True, refresh=True)["available"] is False
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("ide", ["vscode", "intellij"])
+def test_reinstall_without_graph_preserves_native_permissions(repo, ide):
+    instructions = repo / ".github/copilot-instructions.md"
+    instructions.parent.mkdir()
+    instructions.write_text("Existing approval policy.\n", encoding="utf-8")
+    install(repo, ide)
+    first = instructions.read_text(encoding="utf-8")
+    install(repo, ide)
+    assert instructions.read_text(encoding="utf-8") == first
+    assert "Existing approval policy." in first
+    assert "silently skip Graphify" in first
+    assert "existing user-approval process" in first
+    assert not (repo / "graphify-out").exists()
+
+
+@pytest.mark.parametrize("platform", ["copilot", "vscode"])
+def test_legacy_install_repeated_without_graph(repo, platform):
+    from graphify.install import install as install_skill, vscode_install
+    for _ in range(2):
+        if platform == "vscode":
+            vscode_install(repo)
+        else:
+            install_skill(platform="copilot", project=True, project_dir=repo)
+    skill_root = Path.home() if platform == "vscode" else repo
+    skill = (skill_root / ".copilot/skills/repo-analyzer/SKILL.md").read_text(encoding="utf-8")
+    assert skill.count("## Conditional activation") == 1
+    assert "silently skip Graphify" in skill
+    assert "Explicit manual /repo-analyzer" in skill
+    if platform == "vscode":
+        instructions = (repo / ".github/copilot-instructions.md").read_text(encoding="utf-8")
+        assert instructions.count("## graphify") == 1
+        assert "silently skip" in instructions
+    assert not (repo / "graphify-out").exists()
+
+
+def test_mcp_missing_graph_falls_back_and_recovers(repo):
+    import asyncio
+    import sys
+    pytest.importorskip("mcp")
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client, StdioServerParameters
+
+    async def run():
+        path = repo / "graphify-out/graph.json"
+        params = StdioServerParameters(command=sys.executable,
+            args=["-m", "graphify.serve", str(path)], env={"GRAPHIFY_GRAPH_FIRST": "1"})
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as client:
+                await client.initialize()
+                for name, args in [
+                    ("repository_context", {"question": "Explain AddonService"}),
+                    ("repository_context", {"question": "Debug AddonService"}),
+                    ("analyze_change_impact", {"question": "Modify AddonService"}),
+                    ("refresh_graph", {}),
+                    ("query_graph", {"question": "AddonService"}),
+                ]:
+                    response = await client.call_tool(name, args)
+                    assert json.loads(response.content[0].text) == {"available": False, "continue_native": True}
+                    assert not (repo / "graphify-out").exists()
+                ensure_graph(repo)  # explicit generation remains supported
+                response = await client.call_tool("repository_context", {"question": "Explain AddonService"})
+                assert "AddonService.java" in json.loads(response.content[0].text)["candidate_files"]
+                path.unlink()
+                response = await client.call_tool("refresh_graph", {})
+                assert json.loads(response.content[0].text)["continue_native"]
+                assert not path.exists()
     asyncio.run(run())

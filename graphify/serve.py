@@ -3107,7 +3107,10 @@ def _build_server(graph_path: str):
                 target = Path(_resolve_graph_path(project_path)).resolve()
                 if target.parent.name != _paths.GRAPHIFY_OUT or target.name != "graph.json":
                     raise ValueError("Auto-refresh requires the standard repository graph path")
-                status = ensure_graph(target.parent.parent)
+                status = ensure_graph(target.parent.parent, existing_only=True)
+                if status.get("available") is False:
+                    return [types.TextContent(type="text", text=json.dumps({
+                        "available": False, "continue_native": True}))]
             _select_graph(project_path)  # bind G/communities to the target graph
             if name == "refresh_graph":
                 return [types.TextContent(type="text", text=json.dumps(status))]

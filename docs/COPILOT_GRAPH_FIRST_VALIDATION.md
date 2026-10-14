@@ -1,5 +1,9 @@
 # Graph-first validation — 2026-10-12
 
+This is the historical validation of the original mandatory integration. Its
+missing-graph generation behavior is superseded by the conditional workflow
+validated in [COPILOT_CONDITIONAL_VALIDATION.md](COPILOT_CONDITIONAL_VALIDATION.md).
+
 Implementation uses the existing Java extractor, incremental updater, query
 engine, reverse dependency analysis, documentation generator and MCP server.
 The new integration adds no runtime dependency beyond the existing MCP extra.

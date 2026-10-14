@@ -103,8 +103,14 @@ instructions are retained. Reinstallation replaces the Graphify managed block
 and its dedicated hook/agent files. The installer does not remove or reinstall
 the existing `/repo-analyzer` skill.
 
-The first request generates a missing graph using the existing AST rebuild.
-An existing current graph is loaded without regeneration.
+Every ordinary repository request checks for `graphify-out/graph.json`. When
+absent, Graphify is silently skipped: Copilot continues native source searches,
+explanations, debugging and changes with its standard tools and permissions.
+There is no generation, warning, `/repo-analyzer` suggestion or Graphify approval
+gate. Manual graph generation and `/repo-analyzer` commands remain available.
+When present, the graph is queried first and an existing current graph is loaded
+without regeneration. Changes require graph impact analysis before inspecting
+relevant source and the existing user-approval process before source edits.
 
 ## VS Code
 
@@ -121,15 +127,17 @@ enabled/trusted and use the **Local** session target for these hook files.
 The Graphify custom agent makes the workflow explicit, but the repository
 instructions also apply in normal Agent sessions without a slash command.
 
-For each Local prompt, `UserPromptSubmit` queries the graph and records the
+For each Local prompt with an existing graph, `UserPromptSubmit` queries the graph and records the
 question in a session-keyed sidecar. `PreToolUse` synchronizes again and injects
 graph context using the documented `additionalContext` output. It stops the
-session if the prompt hook did not run or graph preparation fails. `Stop`
+session if the prompt hook did not run or graph preparation fails while a graph exists. `Stop`
 synchronizes actual Java changes, including changes made outside Copilot.
 These hooks do not approve tools, run tests or edit Java. The agent still selects
 implementation files and performs validation. Check the IDE hook output and MCP
-tool trace to confirm ordering. Hooks can time out on large initial builds;
-prebuild with `graphify update <repository>` and adjust the configured timeout.
+tool trace to confirm ordering. All hooks immediately allow native tools when
+the graph is missing, including if it is deleted during the session. Graph-first
+MCP calls return `available: false, continue_native: true` in that case and keep
+the server running; a later manually generated graph is picked up automatically.
 
 ## IntelliJ IDEA / GitHub Copilot plugin
 
@@ -160,7 +168,7 @@ in Chat; this workflow is model-mediated.
 - A sidecar `.graph_first_inventory.json` records file mtime/size and graph
   identity. Changed, new or deleted Java files use the existing incremental rebuild.
   Legacy graphs without the sidecar are checked against graph timestamps and
-  recorded source paths. Missing graphs require one initial complete Java extraction.
+  recorded source paths. Missing graphs bypass this synchronization entirely.
 - Invalid JSON is preserved as `graph.invalid-<timestamp>.json` before rebuilding.
   Failed recovery restores it. Extraction failures stop the new workflow instead
   of delivering stale context. Diagnostic output stays off MCP stdout; rebuild
